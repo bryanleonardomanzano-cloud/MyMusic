@@ -36,14 +36,24 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
-}
 
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    kotlin {
+        compilerOptions {
+            jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        }
+    }
+
+    packagingOptions {
+        exclude("META-INF/alice")
+        exclude("META-INF/bob")
     }
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation "androidx.core:core-ktx:1.12.0"
+    implementation "androidx.appcompat:appcompat:1.6.1"
 }
