@@ -38,7 +38,7 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   mockito: ^5.4.4
   build_runner: ^2.4.0
-  riverpod_test: ^0.1.9
+  # riverpod_test: ^2.4.0  # Temporalmente desactivado - requiere versión compatible
 
 flutter:
   uses-material-design: true
