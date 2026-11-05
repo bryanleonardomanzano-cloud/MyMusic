@@ -59,4 +59,6 @@ dependencies {
     implementation "androidx.media:media:1.6.0"
     implementation "androidx.media:media-session:1.5.0"
     implementation "androidx.media:media-session-service:1.5.0"
+    implementation "androidx.localbroadcast:localbroadcast:1.0.0"
+    implementation "androidx.media:media-session:1.5.0"
 }
