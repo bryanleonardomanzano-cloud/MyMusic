@@ -1,6 +1,5 @@
-# MyMusic — pubspec.yaml PROPUESTO (fase arquitectura)
-# NO es funcional todavía. No ejecutar `flutter pub get` hasta aprobación.
-# Ver docs/04_PUBSPEC.md para justificación de cada dependencia.
+# MyMusic — Reproductor musical privado desde Google Drive
+# Arquitectura modular M0-M9
 name: mymusic
 description: Reproductor musical privado desde la colección personal en Google Drive.
 publish_to: 'none'
@@ -37,7 +36,6 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   mockito: ^5.4.4
   build_runner: ^2.3.0
-  # riverpod_test: ^2.4.0  # Temporalmente desactivado - requiere versión compatible
 
 flutter:
   uses-material-design: true
