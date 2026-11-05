@@ -58,4 +58,5 @@ dependencies {
     implementation "androidx.appcompat:appcompat:1.6.1"
     implementation "androidx.media:media:1.6.0"
     implementation "androidx.media:media-session:1.5.0"
+    implementation "androidx.media:media-session-service:1.5.0"
 }
