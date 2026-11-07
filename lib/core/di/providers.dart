@@ -1,27 +1,37 @@
-/// Dependency Injection providers (Riverpod) para el módulo Core.
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
 import 'package:mymusic/core/errors/app_error.dart';
 import 'package:mymusic/core/logging/app_logger.dart';
 import 'package:mymusic/core/network/retry_policy.dart';
 import 'package:mymusic/core/utils/text_utils.dart';
+import 'package:mymusic/features/auth/data/google_sign_in_data_source.dart';
+import 'package:mymusic/features/auth/domain/auth_repository.dart';
+import 'package:mymusic/features/auth/domain/auth_state.dart';
 import 'package:mymusic/features/auth/presentation/auth_notifier.dart';
+import 'package:mymusic/features/google_drive/data/google_drive_data_source.dart';
+import 'package:mymusic/features/google_drive/data/google_drive_repository.dart';
 
-// Logger
 final loggerProvider = Provider<AppLogger>((ref) => AppLogger());
-
-/// Text utilities (solo lectura, stateless)
 final textUtilsProvider = Provider<TextUtils>((ref) => TextUtils());
+final retryPolicyProvider = Provider<RetryPolicy>(
+    (ref) => RetryPolicy(maxAttempts: 3));
 
-/// Retry policy configurado por defecto (3 intentos, backoff 2-4-8s)
-final retryPolicyProvider = Provider<RetryPolicy>((ref) =>
-    RetryPolicy(maxAttempts: 3));
+final authDataSourceProvider = Provider<GoogleSignInDataSource>(
+    (ref) => GoogleSignInDataSource());
 
-/// Error codes global
-final errorCodesProvider = Provider<ErrorCodes>((ref) => ErrorCodes());
+final authRepositoryProvider = Provider<AuthRepository>(
+    (ref) => ref.watch(authDataSourceProvider));
 
-/// Auth — Google Sign-In
-/// El data source se provee directamente; el notifier maneja el estado.
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  final dataSource = GoogleSignInDataSource();
-  return AuthNotifier(dataState: AuthUninitialized());
+  return AuthNotifier(_repository: ref.watch(authRepositoryProvider));
+});
+
+final googleDriveDataSourceProvider = Provider<GoogleDriveDataSource>((ref) {
+  final auth = ref.watch(authDataSourceProvider);
+  final repository = GoogleDriveRepository(
+    httpClient: http.Client(),
+    accessTokenProvider: auth.getAccessToken,
+  );
+  ref.onDispose(repository.dispose);
+  return repository;
 });

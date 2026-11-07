@@ -1,46 +1,37 @@
 # MyMusic
 
-Reproductor musical privado tipo Spotify con catálogo exclusivo de Google Drive.
-Plataformas: Android, iOS y Windows. Flutter + Dart.
+Reproductor musical personal para Android, iOS y Windows, con Google Drive como fuente privada de archivos. La aplicación solicita solo lectura y no modifica los originales.
 
-## Estado actual: ARQUITECTURA (sin código funcional)
+## Estado y alcance de esta entrega
 
-No hay `main` funcional, ni OAuth configurado, ni `flutter create` ejecutado.
-Esta carpeta contiene la arquitectura modular y la documentación para desarrollar
-cada módulo y probarlo antes de continuar con el siguiente.
+Esta rama añade inicio de sesión Google y acceso de lectura a Drive para Android/iOS: solicita `drive.readonly`, obtiene access tokens desde el SDK nativo al hacer peticiones, vuelve a obtener uno al recibir HTTP 401 y busca archivos de audio por páginas en toda la cuenta (incluidas unidades compartidas accesibles). La pantalla inicial permite iniciar sesión, cerrar sesión y analizar/mostrar los archivos encontrados.
 
-## Documentación
+No se guarda contraseña, refresh token ni access token en preferencias. `google_sign_in` gestiona la sesión y la obtención/renovación del access token; el plugin no expone un `refresh_token` OAuth en este flujo. El permiso de Drive se pide después de elegir cuenta. La aplicación nunca usa endpoints de escritura o eliminación.
 
-- `docs/00_OVERVIEW.md` — objetivo y alcance
-- `docs/01_ARCHITECTURE.md` — arquitectura por capas (Clean Architecture, feature-first)
-- `docs/02_MODULES.md` — módulos M0–M9 y responsabilidades
-- `docs/03_INTERFACES.md` — contratos entre módulos (repositorios, Result, errores)
-- `docs/04_PUBSPEC.md` — dependencias propuestas y justificación
-- `docs/05_TESTING_STRATEGY.md` — pirámide de pruebas y falsos (fakes)
-- `docs/06_FOLDER_STRUCTURE.md` — estructura completa de carpetas
-- `docs/07_DEVELOPMENT_ORDER_RISKS.md` — orden de desarrollo, criterios de salida y riesgos
-- `docs/08_EXTENSIBILITY_VERIFICATION.md` — verificación de extensibilidad
+**Aún pendiente:** reproducción de archivos Drive, metadatos embebidos, SQLite/indexación, descarga offline, cola/audio en segundo plano, UI completa y configuración OAuth por plataforma. La versión actual solo enumera los archivos encontrados.
 
-## Estructura (resumen)
+## Plataformas y requisito de configuración
 
-```text
-lib/
-  app/            # composición raíz (skeleton, no funcional)
-  core/           # M0: di, errors, logging, network, utils
-  features/       # M1–M9, cada una con domain/ data/ presentation/
-  shared/         # widgets y tema compartidos
-  data/platform/  # adaptadores por plataforma (Android/iOS/Windows)
-docs/  test/{unit,integration,widget}/  assets/
-```
+El `google_sign_in` fijado en este proyecto da soporte al flujo nativo de Android/iOS; Windows requiere un flujo OAuth de escritorio diferente y todavía no puede iniciar sesión desde esta pantalla. No pegues client secrets en el código ni en el repositorio.
 
-## Reglas duras
+En Google Cloud Console, con una cuenta personal:
 
-- Google Drive es SOLO LECTURA: nunca modificar ni eliminar archivos (scope `drive.readonly`).
-- No guardar contraseñas. Token solo en memoria + `flutter_secure_storage`.
-- Sin servicios de pago ni backend. Todo el catálogo viene de Drive vía `fileId`/`accessToken`.
+1. Crea/elige un proyecto y habilita **Google Drive API**.
+2. Configura la pantalla de consentimiento OAuth y agrega tu cuenta como usuario de prueba si la app está en pruebas.
+3. Crea los clientes OAuth adecuados para Android (paquete + SHA-1/SHA-256) y iOS (Bundle ID); configura los archivos/plist de plataforma que exige `google_sign_in`.
+4. Comprueba que la cuenta autoriza el alcance `https://www.googleapis.com/auth/drive.readonly`.
+5. Ejecuta en la raíz: `flutter pub get`, `flutter analyze` y `flutter test`.
 
-## Próximo paso propuesto (requiere tu aprobación)
+Google ofrece cuotas de API sujetas a sus políticas y cambios. Esta aplicación no requiere un backend, suscripción o publicidad de pago; no se puede prometer que las cuotas o políticas gratuitas de Google sean inmutables.
 
-1. `flutter create` sobre esta estructura y `flutter pub get` con el pubspec propuesto.
-2. Desarrollar en orden: `core` → `auth` → `drive_scanner` → `metadata` → `library` → `player` → `offline` → `playlists`/`search` → `ui_shell`, probando cada módulo.
-3. Recién después, configurar OAuth de Google Cloud (no hecho en esta fase).
+## Privacidad y límites
+
+- MyMusic solo solicita el alcance OAuth de lectura de Drive.
+- Las llamadas usan `files.list` y `files.get`; no se implementan `create`, `update`, `delete`, movimiento ni renombrado.
+- No registres access tokens en logs ni los incluyas en URLs.
+- `getDownloadUrl` devuelve la ruta `alt=media`; quien la use debe adjuntar el bearer token como header.
+- Los permisos a archivos compartidos siguen sujetos a la cuenta y a Google Drive.
+
+## Verificación
+
+Se añadieron pruebas unitarias del repositorio Drive para filtro, cabecera de autorización, reintento tras 401 y paginación. No se afirma que estas pruebas hayan sido ejecutadas en este entorno. Ejecuta `flutter pub get && flutter analyze && flutter test` con Flutter instalado y configura credenciales OAuth reales antes de probar el login en un dispositivo.
