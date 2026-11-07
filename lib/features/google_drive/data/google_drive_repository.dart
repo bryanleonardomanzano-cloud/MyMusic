@@ -1,7 +1,4 @@
-/// Repositorio implementa [GoogleDriveDataSource].
-/// Entrega instancias de [GoogleDriveFile] desde Google Drive.
-/// Esta versión usa la API de Google Drive con autenticación OAuth 2.0
-/// mediante un access token proporcionado externamente.
+/// Read-only Google Drive API v3 access.
 library mymusic.features.google_drive.data.google_drive_repository;
 
 import 'dart:convert';
@@ -11,164 +8,158 @@ import 'package:http/http.dart' as http;
 import 'package:mymusic/features/google_drive/data/google_drive_data_source.dart';
 import 'package:mymusic/features/google_drive/domain/google_drive_state.dart';
 
-/// Implementación de [GoogleDriveDataSource] que usa la API de Google Drive
-/// con autenticación OAuth 2.0 mediante access token.
+/// Supplies a fresh access token when needed. The auth SDK owns token renewal.
+typedef DriveAccessTokenProvider = Future<String> Function(
+    {bool forceRefresh});
+
 class GoogleDriveRepository implements GoogleDriveDataSource {
-  /// Cliente HTTP autenticado
-  final http.Client _httpClient;
-
-  /// Access token de OAuth 2.0 para autenticación con Google Drive API
-  final String _accessToken;
-
-  /// ID de la carpeta raíz en Google Drive (opcional, para filtrar por carpeta)
-  final String? folderId;
-
-  /// URL base de la API de Google Drive v3
-  static const String _apiBaseUrl = 'https://www.googleapis.com/drive/v3';
-
   GoogleDriveRepository({
     required http.Client httpClient,
-    required String accessToken,
+    required DriveAccessTokenProvider accessTokenProvider,
     this.folderId,
-  }) : _httpClient = httpClient,
-       _accessToken = accessToken;
+  })  : _httpClient = httpClient,
+        _accessTokenProvider = accessTokenProvider;
 
+  final http.Client _httpClient;
+  final DriveAccessTokenProvider _accessTokenProvider;
+  final String? folderId;
+
+  static const String _apiBaseUrl = 'https://www.googleapis.com/drive/v3';
+  static const Set<String> _audioExtensions = <String>{
+    'mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg', 'opus', 'wma', 'aiff', 'alac'
+  };
+  static const String _fields =
+      'nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,webViewLink)';
+
+  /// Lists one Drive API page. With no folderId, Drive searches the whole
+  /// account, including nested folders. With folderId, it lists direct children.
   @override
   Future<List<GoogleDriveFile>> listAudioFiles({
     int? pageSize,
     String? pageToken,
   }) async {
-    try {
-      final query = _buildQuery();
-
-      final response = await _httpClient.get(
-        Uri.parse('$_apiBaseUrl/files').replace(queryParameters: {
-          'pageSize': (pageSize ?? 50).toString(),
-          if (pageToken != null) 'pageToken': pageToken,
-          'q': query,
-          'orderBy': 'modifiedTime desc',
-          'fields': 'nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,webViewLink)',
-        }),
-        headers: {
-          'Authorization': 'Bearer $_accessToken',
-          'Accept': 'application/json',
-        },
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception('Error al listar archivos: ${response.statusCode}');
-      }
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final filesList = data['files'] as List? ?? [];
-
-      final files = <GoogleDriveFile>[];
-      for (final fileData in filesList) {
-        final mimeType = fileData['mimeType'] as String?;
-        final name = fileData['name'] as String? ?? '';
-
-        // Filtrar solo archivos de audio
-        if (mimeType != null &&
-            (mimeType.contains('audio') ||
-                name.toLowerCase().endsWith('.mp3') ||
-                name.toLowerCase().endsWith('.wav') ||
-                name.toLowerCase().endsWith('.ogg') ||
-                name.toLowerCase().endsWith('.flac') ||
-                name.toLowerCase().endsWith('.aac') ||
-                name.toLowerCase().endsWith('.m4a'))) {
-          files.add(_mapToGoogleDriveFile(fileData));
-        }
-      }
-
-      return files;
-    } catch (e) {
-      throw Exception('Error al listar archivos de Google Drive: $e');
+    final query = _audioQuery();
+    final uri = Uri.parse('$_apiBaseUrl/files').replace(queryParameters: {
+      'pageSize': (pageSize ?? 100).clamp(1, 1000).toString(),
+      if (pageToken != null) 'pageToken': pageToken,
+      'q': query,
+      'orderBy': 'name',
+      'fields': _fields,
+      'supportsAllDrives': 'true',
+      'includeItemsFromAllDrives': 'true',
+    });
+    final response = await _authorizedGet(uri);
+    if (response.statusCode != 200) {
+      throw _driveException('listar archivos', response);
     }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final files = decoded['files'] as List<dynamic>? ?? const [];
+    return files
+        .whereType<Map<String, dynamic>>()
+        .map(_mapToGoogleDriveFile)
+        .where((file) => file.isAudioFile)
+        .toList(growable: false);
+  }
+
+  /// Retrieves every page of the account-wide audio search. Drive's files.list
+  /// search covers nested folders, so this avoids one API call per directory.
+  Future<List<GoogleDriveFile>> scanAudioFiles() async {
+    final result = <GoogleDriveFile>[];
+    String? pageToken;
+    do {
+      final uri = Uri.parse('$_apiBaseUrl/files').replace(queryParameters: {
+        'pageSize': '1000',
+        if (pageToken != null) 'pageToken': pageToken,
+        'q': _audioQuery(),
+        'orderBy': 'name',
+        'fields': _fields,
+        'supportsAllDrives': 'true',
+        'includeItemsFromAllDrives': 'true',
+      });
+      final response = await _authorizedGet(uri);
+      if (response.statusCode != 200) {
+        throw _driveException('analizar la biblioteca', response);
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final files = decoded['files'] as List<dynamic>? ?? const [];
+      result.addAll(files
+          .whereType<Map<String, dynamic>>()
+          .map(_mapToGoogleDriveFile)
+          .where((file) => file.isAudioFile));
+      pageToken = decoded['nextPageToken'] as String?;
+    } while (pageToken != null && pageToken.isNotEmpty);
+    return result;
   }
 
   @override
   Future<String?> getDownloadUrl(String fileId) async {
-    try {
-      final response = await _httpClient.get(
-        Uri.parse('$_apiBaseUrl/files/$fileId?fields=webViewLink,id,name'),
-        headers: {
-          'Authorization': 'Bearer $_accessToken',
-          'Accept': 'application/json',
-        },
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception('Error al obtener URL de descarga: ${response.statusCode}');
-      }
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      return data['webViewLink'] as String?;
-    } catch (e) {
-      throw Exception('Error al obtener URL de descarga: $e');
-    }
+    // La URL necesita el header Authorization: Bearer <token> al usarse.
+    // No se incluye ni persiste el token en la URL.
+    final uri = Uri.parse('$_apiBaseUrl/files/${Uri.encodeComponent(fileId)}')
+        .replace(queryParameters: const {'alt': 'media'});
+    return uri.toString();
   }
 
   @override
   Future<GoogleDriveFile?> getFile(String fileId) async {
-    try {
-      final response = await _httpClient.get(
-        Uri.parse('$_apiBaseUrl/files/$fileId?fields=*'),
-        headers: {
-          'Authorization': 'Bearer $_accessToken',
-          'Accept': 'application/json',
-        },
-      );
-
-      if (response.statusCode != 200) {
-        return null;
-      }
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      return _mapToGoogleDriveFile(data);
-    } catch (e) {
-      throw Exception('Error al obtener archivo: $e');
+    final uri = Uri.parse('$_apiBaseUrl/files/${Uri.encodeComponent(fileId)}')
+        .replace(queryParameters: const {
+      'fields': 'id,name,mimeType,size,createdTime,modifiedTime,webViewLink',
+      'supportsAllDrives': 'true',
+    });
+    final response = await _authorizedGet(uri);
+    if (response.statusCode == 404) return null;
+    if (response.statusCode != 200) {
+      throw _driveException('obtener archivo', response);
     }
+    return _mapToGoogleDriveFile(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  /// Construye la consulta para filtrar archivos de audio
-  String _buildQuery() {
-    final parts = <String>[];
-
-    // Filtrar por tipo de audio
-    parts.add("mimeType contains 'audio/'");
-    parts.add("name contains '.mp3' or name contains '.wav' or name contains '.ogg'");
-    parts.add("name contains '.flac' or name contains '.aac' or name contains '.m4a'");
-
-    // Filtrar por carpeta si se especificó
-    if (folderId != null) {
-      parts.add("'$folderId' in parents");
+  Future<http.Response> _authorizedGet(Uri uri) async {
+    var token = await _accessTokenProvider(forceRefresh: false);
+    var response = await _httpClient.get(uri, headers: {
+      'Authorization': 'Bearer $token',
+      'Accept': 'application/json',
+    });
+    if (response.statusCode == 401) {
+      token = await _accessTokenProvider(forceRefresh: true);
+      response = await _httpClient.get(uri, headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      });
     }
-
-    // Solo archivos no eliminados
-    parts.add("trashed = false");
-
-    return '(${parts.join(' or ')})';
+    return response;
   }
 
-  /// Mapea un archivo de la API de Google Drive a GoogleDriveFile
+  String _audioQuery() {
+    final extensions = _audioExtensions
+        .map((extension) => "name contains '.$extension'")
+        .join(' or ');
+    final audioPredicate = "mimeType contains 'audio/' or $extensions";
+    final parentPredicate = folderId == null
+        ? ''
+        : " and '${folderId!.replaceAll("'", r"\'")}' in parents";
+    return 'trashed = false and ($audioPredicate)$parentPredicate';
+  }
+
   GoogleDriveFile _mapToGoogleDriveFile(Map<String, dynamic> file) {
+    final now = DateTime.now();
     return GoogleDriveFile(
       id: file['id'] as String? ?? '',
       name: file['name'] as String? ?? 'Sin nombre',
       mimeType: file['mimeType'] as String? ?? 'application/octet-stream',
       size: (file['size'] as num?)?.toInt() ?? 0,
-      createdTime: file['createdTime'] != null
-          ? DateTime.parse(file['createdTime'] as String)
-          : DateTime.now(),
-      modifiedTime: file['modifiedTime'] != null
-          ? DateTime.parse(file['modifiedTime'] as String)
-          : DateTime.now(),
+      createdTime: DateTime.tryParse(file['createdTime'] as String? ?? '') ?? now,
+      modifiedTime:
+          DateTime.tryParse(file['modifiedTime'] as String? ?? '') ?? now,
       downloadUrl: file['webViewLink'] as String?,
     );
   }
 
+  Exception _driveException(String operation, http.Response response) =>
+      Exception('Error al $operation en Google Drive (${response.statusCode}).');
+
   @override
-  Future<void> dispose() async {
-    _httpClient.close();
-  }
+  Future<void> dispose() async => _httpClient.close();
 }
